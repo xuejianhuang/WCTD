@@ -9,7 +9,7 @@
 
 </div>
 
-This repository contains the official implementation of the paper **WCTD**, a novel method for generating **targeted transferable adversarial examples** using a teacher–student distillation framework with wavelet-guided refinement.
+This repository contains the official implementation of the paper **Wavelet-Constrained Trajectory Distillation for Efficient Transferable Targeted Attacks**.
 
 ---
 
@@ -23,15 +23,8 @@ This repository contains the official implementation of the paper **WCTD**, a no
 ---
 
 ## 📌 Method Overview
-
-WCTD generates high-quality targeted adversarial examples through a teacher–student distillation framework:
-
-| Component | Role |
-|-----------|------|
-| **Teacher** | Performs target-aware iterative refinement with wavelet-guided detail preservation |
-| **Student** | Learns to reproduce the teacher's refinement process in a **single forward step** |
-
-This design achieves an optimal balance between **attack success rate**, **transferability**, and **computational efficiency**, while keeping perturbations visually imperceptible.
+WCTD is a teacher-student framework for generating targeted transferable adversarial examples.
+The teacher model performs target-aware multi-step refinement with wavelet-guided detail preservation, while the student model learns to mimic this refinement process in a single step. This design enables WCTD to achieve both strong attack effectiveness and high inference efficiency, while keeping the generated perturbations relatively imperceptible.
 
 <div align="center">
   <img src='./fig/model.png' width='80%' alt="WCTD Framework">
@@ -42,6 +35,7 @@ This design achieves an optimal balance between **attack success rate**, **trans
 ---
 
 ## 📂 Datasets
+<div align="center">
 
 | Dataset | Usage | Link | Notes |
 |---------|-------|------|-------|
@@ -49,7 +43,7 @@ This design achieves an optimal balance between **attack success rate**, **trans
 | **ImageNet-NeurIPS** | Testing | [Kaggle](https://www.kaggle.com/c/nips-2017-non-targeted-adversarial-attack) | Standard adversarial benchmark |
 | **MSCOCO val2017** | Testing   | [Download](http://images.cocodataset.org/zips/val2017.zip) | Cross-domain evaluation |
 
----
+</div>
 
 ## 🧠 Victim Models
 
@@ -58,30 +52,30 @@ We evaluate WCTD against a diverse set of victim models spanning multiple archit
 <details>
 <summary><b>CNN-based Models (7)</b></summary>
 
-- Inception-v3
-- ResNet-152
-- DenseNet-121
-- GoogleNet
-- VGG-16
-- Inception-ResNet-v2
-- Inception-v4
+- [Inception-v3](https://huggingface.co/litert-community/inception_v3/tree/main)
+- [ResNet-152](https://huggingface.co/litert-community/resnet152)
+- [DenseNet-121](https://download.pytorch.org/models/densenet121-a639ec97.pth)
+- [GoogleNet](https://download.pytorch.org/models/googlenet-1378be20.pth)
+- [VGG-16](https://huggingface.co/timm/vgg16.tv_in1k/tree/main)
+- [Inception-ResNet-v2](https://huggingface.co/timm/inception_resnet_v2.tf_in1k/tree/main)
+- [Inception-v4](https://huggingface.co/timm/inception_v4.tf_in1k/tree/main)
 </details>
 
 <details>
 <summary><b>Transformer-based Models (4)</b></summary>
 
-- ViT-B/16
-- DeiT-B
-- Swin-T
-- Swin-B
+- [ViT-B/16](https://huggingface.co/google/vit-base-patch16-224/tree/main)
+- [DeiT-B](https://huggingface.co/facebook/deit-base-distilled-patch16-224/tree/main)
+- [Swin-T](https://huggingface.co/microsoft/swin-tiny-patch4-window7-224)
+- [Swin-B](https://huggingface.co/microsoft/swin-base-patch4-window7-224/tree/main)
 </details>
 
 <details>
 <summary><b>MLP-based Models (3)</b></summary>
 
-- CycleMLP
-- Mixer-B/16
-- Mixer-L/16
+- [CycleMLP](https://github.com/ShoufaChen/CycleMLP?tab=readme-ov-file)
+- [Mixer-B/16](https://huggingface.co/timm/mixer_b16_224.goog_in21k_ft_in1k/tree/main)
+- [Mixer-L/16](https://huggingface.co/timm/mixer_l16_224.goog_in21k_ft_in1k)
 </details>
 
 <details>
@@ -98,25 +92,29 @@ We evaluate WCTD against a diverse set of victim models spanning multiple archit
 
 Surrogate models used for attack generation:
 
+<div align="center">
+
 | Category | Models |
 |----------|--------|
-| **CNN** | Inception-v3, ResNet-152 |
-| **Transformer** | Swin-T, DeiT-B |
-| **MLP** | CycleMLP, Mixer-B/16 |
+| **CNN** | [Inception-v3](https://huggingface.co/litert-community/inception_v3/tree/main), [ResNet-152](https://huggingface.co/litert-community/resnet152) |
+| **Transformer** | [Swin-T](https://huggingface.co/microsoft/swin-tiny-patch4-window7-224), [DeiT-B](https://huggingface.co/facebook/deit-base-distilled-patch16-224/tree/main) |
+| **MLP** | [CycleMLP](https://github.com/ShoufaChen/CycleMLP?tab=readme-ov-file), [Mixer-B/16](https://huggingface.co/timm/mixer_b16_224.goog_in21k_ft_in1k/tree/main) |
 
----
+</div>
 
 ## ⚙️ Baseline Methods
 
 We compare WCTD against state-of-the-art targeted attack methods:
 
+<div align="center">
+  
 | Category | Methods |
 |----------|---------|
-| **Optimization-based** | Logit, SU |
-| **Generator-based** | C-GSP, CGNC |
-| **Diffusion / Flow-based** | DiffAttack, TGAF, Dual_Flow |
+| **Optimization-based** | [Logit](https://github.com/ZhengyuZhao/Targeted-Transfer), [SU](https://github.com/zhipeng-wei/Self-Universality) |
+| **Generator-based** | [C-GSP](https://github.com/ShawnXYang/C-GSP), [CGNC](https://github.com/ffhibnese/CGNC_Targeted_Adversarial_Attacks) |
+| **Diffusion / Flow-based** | [DiffAttack](https://github.com/WindVChen/DiffAttack), [TGAF](https://github.com/TemenosMistral/TGAF), [Dual_Flow](https://github.com/Chyxx/Dual-Flow) |
 
----
+</div>
 
 ## 📁 Project Structure
 
