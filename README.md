@@ -13,18 +13,8 @@ This repository contains the official implementation of the paper **Wavelet-Cons
 
 ---
 
-## 🎯 Key Features
-
-- ⚡ **Efficient**: Single-step generation via student network
-- 🎨 **Imperceptible**: Wavelet-constrained perturbations
-- 🔄 **Transferable**: Works across CNN, Transformer, and MLP architectures
-- 🎯 **Targeted**: Precise class-specific attacks
-
----
-
 ## 📌 Method Overview
-WCTD is a teacher-student framework for generating targeted transferable adversarial examples.
-The teacher model performs target-aware multi-step refinement with wavelet-guided detail preservation, while the student model learns to mimic this refinement process in a single step. This design enables WCTD to achieve both strong attack effectiveness and high inference efficiency, while keeping the generated perturbations relatively imperceptible.
+
 
 <div align="center">
   <img src='./fig/model.png' width='80%' alt="WCTD Framework">
@@ -91,33 +81,31 @@ We evaluate WCTD against a diverse set of victim models spanning multiple archit
 ## 🧪 Surrogate Models
 
 Surrogate models used for attack generation:
-
-<div align="center">
-
-| Category | Models |
-|----------|--------|
-| **CNN** | [Inception-v3](https://huggingface.co/litert-community/inception_v3/tree/main), [ResNet-152](https://huggingface.co/litert-community/resnet152) |
-| **Transformer** | [Swin-T](https://huggingface.co/microsoft/swin-tiny-patch4-window7-224), [DeiT-B](https://huggingface.co/facebook/deit-base-distilled-patch16-224/tree/main) |
-| **MLP** | [CycleMLP](https://github.com/ShoufaChen/CycleMLP?tab=readme-ov-file), [Mixer-B/16](https://huggingface.co/timm/mixer_b16_224.goog_in21k_ft_in1k/tree/main) |
-
-</div>
+- **CNN-based**
+  - [Inception-v3](https://huggingface.co/litert-community/inception_v3/tree/main)
+  - [ResNet-152](https://huggingface.co/litert-community/resnet152)
+- **Transformer-based**
+  - [Swin-T](https://huggingface.co/microsoft/swin-tiny-patch4-window7-224)
+  - [DeiT-B](https://huggingface.co/facebook/deit-base-distilled-patch16-224/tree/main)
+- **MLP-based**
+  - [CycleMLP](https://github.com/ShoufaChen/CycleMLP?tab=readme-ov-file)
+  - [Mixer-B/16](https://huggingface.co/timm/mixer_b16_224.goog_in21k_ft_in1k/tree/main)
 
 ## ⚙️ Baseline Methods
 
 We compare WCTD against state-of-the-art targeted attack methods:
-
-<div align="center">
-  
-| Category | Methods |
-|----------|---------|
-| **Optimization-based** | [Logit](https://github.com/ZhengyuZhao/Targeted-Transfer), [SU](https://github.com/zhipeng-wei/Self-Universality) |
-| **Generator-based** | [C-GSP](https://github.com/ShawnXYang/C-GSP), [CGNC](https://github.com/ffhibnese/CGNC_Targeted_Adversarial_Attacks) |
-| **Diffusion / Flow-based** | [DiffAttack](https://github.com/WindVChen/DiffAttack), [TGAF](https://github.com/TemenosMistral/TGAF), [Dual_Flow](https://github.com/Chyxx/Dual-Flow) |
-
-</div>
+- **Optimization-based**
+  - [Logit](https://github.com/ZhengyuZhao/Targeted-Transfer)
+  - [SU](https://github.com/zhipeng-wei/Self-Universality)
+- **Generator-based**
+  - [C-GSP](https://github.com/ShawnXYang/C-GSP)
+  - [CGNC](https://github.com/ffhibnese/CGNC_Targeted_Adversarial_Attacks)
+- **Diffusion / Flow-based**
+   - [DiffAttack](https://github.com/WindVChen/DiffAttack)
+   - [TGAF](https://github.com/TemenosMistral/TGAF)
+   - [Dual_Flow](https://github.com/Chyxx/Dual-Flow)
 
 ## 📁 Project Structure
-
 
 ```
 ├── data/
@@ -152,33 +140,6 @@ We compare WCTD against state-of-the-art targeted attack methods:
 ```
 
 ---
-
-## 🛠️ Environment Setup
-
-### Prerequisites
-- Python 3.8+
-- CUDA 11.3+ (recommended for GPU acceleration)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/xuejianhuang/WCTD.git
-cd WCTD
-
-# Create virtual environment
-python -m venv WCTD_env
-
-# Activate environment
-# Windows:
-WCTD_env\Scripts\activate
-# macOS/Linux:
-source WCTD_env/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-```
 
 ## 🚀 Training
 
