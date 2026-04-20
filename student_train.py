@@ -75,7 +75,6 @@ def main():
 
         args = parser.parse_args()
 
-        # 保持你原逻辑（log_dir 依赖 output_root）
         args.log_dir = os.path.join(args.output_root, "logs")
 
         return args
@@ -304,13 +303,11 @@ def main():
                 teacher_adv_raw = unet_out_transform(unnormalize_ddpm(teacher_adv_raw))
                 teacher_adv_budget = budget(teacher_adv_raw, clean_imgs, eps, args.attack_mode)
 
-                # 适配HF模型logits
                 if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
                     teacher_logits = classifier(normalize(teacher_adv_budget)).logits.detach()
                 else:
                     teacher_logits = classifier(normalize(teacher_adv_budget)).detach()
 
-                # 6. 随机采样k步（排除最后一步）
                 k = random.randint(0, len(timesteps) - 2)
                 t_k = timesteps[k]
                 z_k = trajectory[k].clone()
@@ -326,47 +323,39 @@ def main():
 
             loss_kl = torch.tensor(0.0, device=device, dtype=weight_dtype)
             if args.lambda_log > 0:
-                # 学生分类器输出logits
                 if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
                     student_logits = classifier(normalize(adv_imgs_adv_loss)).logits
                 else:
                     student_logits = classifier(normalize(adv_imgs_adv_loss))
 
                 T = args.distill_temperature
-                # 温度缩放
                 teacher_logits_T = teacher_logits / T
                 student_logits_T = student_logits / T
 
-                # Logits最大值平移（防止Softmax指数溢出）
                 teacher_max_val = teacher_logits_T.max(dim=-1, keepdim=True)[0]
                 student_max_val = student_logits_T.max(dim=-1, keepdim=True)[0]
                 teacher_logits_T_stable = teacher_logits_T - teacher_max_val
                 student_logits_T_stable = student_logits_T - student_max_val
 
-                # 计算概率分布
                 teacher_probs = F.softmax(teacher_logits_T_stable, dim=-1)
                 student_log_probs = F.log_softmax(student_logits_T_stable, dim=-1)
 
-                # 防零Epsilon + 重新归一化
                 epsilon = 1e-10
                 teacher_probs_safe = teacher_probs + epsilon
                 teacher_probs_safe = teacher_probs_safe / teacher_probs_safe.sum(dim=-1, keepdim=True)
 
-                # 计算KL散度
                 loss_kl = F.kl_div(student_log_probs.double(), teacher_probs_safe.double(),
                                    reduction='batchmean').float()
                 loss_kl = loss_kl * (T ** 2)
 
             loss_distill = args.lambda_img * loss_mse + args.lambda_log * loss_kl
 
-            # 3. 对抗损失
             if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
                 adv_out = classifier(normalize(adv_imgs_adv_loss)).logits
             else:
                 adv_out = classifier(normalize(adv_imgs_adv_loss))
             loss_adv = criterion(adv_out, labels)
 
-            # 4. 总Loss
             total_loss = args.w_distill * loss_distill + args.w_adv * loss_adv
 
             optimizer.zero_grad()
