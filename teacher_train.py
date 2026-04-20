@@ -63,7 +63,6 @@ def main():
 
         args = parser.parse_args()
 
-        # 保持你原逻辑：log_dir = os.path.join(output_root, "logs")
         args.log_dir = os.path.join(args.output_root, "logs")
 
         return args
