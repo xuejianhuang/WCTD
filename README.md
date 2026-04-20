@@ -68,16 +68,6 @@ We evaluate WCTD against a diverse set of victim models spanning multiple archit
 - [Mixer-L/16](https://huggingface.co/timm/mixer_l16_224.goog_in21k_ft_in1k)
 </details>
 
-<details>
-<summary><b>Diffusion-based Models (1)</b></summary>
-
-- Stable Diffusion v1-5
-</details>
-
-🔗 **Model checkpoints**: See [original documentation](#) for download links.
-
----
-
 ## 🧪 Surrogate Models
 
 Surrogate models used for attack generation:
