@@ -43,12 +43,13 @@ We evaluate WCTD against a diverse set of victim models spanning multiple archit
 <summary><b>CNN-based Models (7)</b></summary>
 
 - [Inception-v3](https://huggingface.co/litert-community/inception_v3/tree/main)
+- [Inception-v4](https://huggingface.co/timm/inception_v4.tf_in1k/tree/main)
 - [ResNet-152](https://huggingface.co/litert-community/resnet152)
+- [Inception-ResNet-v2](https://huggingface.co/timm/inception_resnet_v2.tf_in1k/tree/main)
 - [DenseNet-121](https://download.pytorch.org/models/densenet121-a639ec97.pth)
 - [GoogleNet](https://download.pytorch.org/models/googlenet-1378be20.pth)
 - [VGG-16](https://huggingface.co/timm/vgg16.tv_in1k/tree/main)
-- [Inception-ResNet-v2](https://huggingface.co/timm/inception_resnet_v2.tf_in1k/tree/main)
-- [Inception-v4](https://huggingface.co/timm/inception_v4.tf_in1k/tree/main)
+
 </details>
 
 <details>
@@ -136,45 +137,45 @@ We compare WCTD against state-of-the-art targeted attack methods:
 ### Teacher Training
 
 ```bash
-python teacher_train.py \
-  --pretrained_model_name_or_path="downloaded_pretrain_models" \
-  --dataset_dir="/path/to/imagenet/train" \
-  --output_root="/path/to/output" \
-  --model_type=res152 \
-  --attack_mode=multi_targeted \
-  --train_batch_size=4 \
-  --num_train_epochs=10 \
-  --learning_rate=1e-04 \
+python teacher_train.py 
+  --pretrained_model_name_or_path="downloaded_pretrain_models" 
+  --dataset_dir="/path/to/imagenet/train" 
+  --output_root="/path/to/output" 
+  --model_type=res152 
+  --attack_mode=multi_targeted 
+  --train_batch_size=4 
+  --num_train_epochs=10 
+  --learning_rate=1e-04 
   --seed=42
 ```
 
 ### Student Training
 
 ```bash
-python student_train.py \
-  --pretrained_model_name_or_path="downloaded_pretrain_models" \
-  --dataset_dir="/path/to/imagenet/train" \
-  --output_root="/path/to/output" \
-  --model_type=res152 \
-  --attack_mode=multi_targeted \
-  --train_batch_size=4 \
-  --num_train_epochs=10 \
-  --learning_rate=1e-04 \
+python student_train.py 
+  --pretrained_model_name_or_path="downloaded_pretrain_models" 
+  --dataset_dir="/path/to/imagenet/train" 
+  --output_root="/path/to/output" 
+  --model_type=res152 
+  --attack_mode=multi_targeted 
+  --train_batch_size=4 
+  --num_train_epochs=10 
+  --learning_rate=1e-04 
   --seed=42
 ```
 
 ## 🧪 Generating Adversarial Examples
 
 ```bash
-python eval.py \
-  --pretrained_model_name_or_path="downloaded_pretrain_models" \
-  --dataset_dir="/data/imagenet-nips-val" \
-  --student_lora_path="/output/final_model" \
-  --save_dir="/output/eval_results" \
-  --model_type=res152 \
-  --attack_mode=multi_targeted \
-  --test_batch_size=8 \
-  --eps=16 \
+python eval.py 
+  --pretrained_model_name_or_path="downloaded_pretrain_models" 
+  --dataset_dir="/data/imagenet-nips-val" 
+  --student_lora_path="/output/final_model" 
+  --save_dir="/output/eval_results" 
+  --model_type=res152 
+  --attack_mode=multi_targeted 
+  --test_batch_size=8 
+  --eps=16 
   --seed=42
 ```
 ## 🛡️ Test Robust Models
@@ -182,16 +183,16 @@ python eval.py \
 ### Single Robust Model Test
 
 ```bash
-python inference.py \
-  --test_dir="/path/to/imagenet-nips-val" \
-  --batch_size=8 \
+python inference.py 
+  --test_dir="/path/to/imagenet-nips-val" 
+  --batch_size=8 
   --model_type=robust
 ```
 ### All Robust Models Test
 
 ```bash
-python inference.py \
-  --test_dir="/data/imagenet-nips-val" \
+python inference.py 
+  --test_dir="/data/imagenet-nips-val" 
   --model_type=all
 ```
 
