@@ -179,22 +179,33 @@ python eval.py
   --eps=16 
   --seed=42
 ```
-## 🛡️ Test Robust Models
+## 🛡️ Test  Models
 
-### Single Robust Model Test
+### Robust Model Test
 
 ```bash
-python inference.py 
-  --test_dir="/path/to/imagenet-nips-val" 
-  --batch_size=8 
-  --model_type=robust
+python inference.py \
+  --dataset_dir /path/to/imagenet-nips-val/images \
+  --data_dir /path/to/imagenet-nips-val \
+  --pretrained_model_name_or_path downloaded_pretrain_models \
+  --lora_path /path/to/your_modal.safetensors \
+  --source_model_name res152 \
+  --eval_model_type robust \
+  --label_flag N8 \
+  --batch_size 4
 ```
-### All Robust Models Test
+### All  Models Test
 
 ```bash
 python inference.py 
-  --test_dir="/data/imagenet-nips-val" 
-  --model_type=all
+  --dataset_dir /path/to/imagenet-nips-val/images \
+  --data_dir /path/to/imagenet-nips-val \
+  --pretrained_model_name_or_path downloaded_pretrain_models \
+  --lora_path /path/to/your_modal.safetensors \
+  --source_model_name res152 \
+  --eval_model_type all \
+  --label_flag N8 \
+  --batch_size 4
 ```
 
 ## 🙏 Acknowledgements
