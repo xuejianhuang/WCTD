@@ -276,11 +276,16 @@ def fix_labels_nips(
 ) -> torch.utils.data.Dataset:
     filenames = [os.path.basename(path) for path, _ in test_set.samples]
 
+    def recover_image_id(fname):
+        image_id = os.path.splitext(fname)[0]
+        if image_id.endswith("-checkpoint"):
+            image_id = image_id[:-len("-checkpoint")]
+        return image_id
+    
     image_classes = pd.read_csv(os.path.join(data_dir, "images.csv"))
     image_metadata = pd.DataFrame(
-        {"ImageId": [os.path.splitext(f)[0] for f in filenames]}
+        {"ImageId": [recover_image_id(f) for f in filenames]}
     ).merge(image_classes[["ImageId", "TrueLabel"]], on="ImageId", how="left")
-
     if image_metadata["TrueLabel"].isnull().any():
         missing_ids = image_metadata[image_metadata["TrueLabel"].isnull()]["ImageId"].tolist()
         raise ValueError(f"Missing labels for: {missing_ids}")
