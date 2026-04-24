@@ -24,9 +24,17 @@ import argparse
 from utils import *
 
 
+class ImageFolderWithPath(torchvision.datasets.ImageFolder):
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        sample = self.loader(path)
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, target, path
+
+
 def main():
     # ======================== Configuration ========================
-
 
     def parse_args():
         parser = argparse.ArgumentParser()
@@ -51,7 +59,7 @@ def main():
         parser.add_argument("--dataset_dir", type=str, required=True)
         parser.add_argument("--output_root", type=str, required=True)
 
-        parser.add_argument("--model_type", type=str, default="res152") #incv3，res152，swin_tiny，mixer_b16，deit_b，cycle_mlp
+        parser.add_argument("--model_type", type=str, default="res152")  # incv3，res152，swin_tiny，mixer_b16，deit_b，cycle_mlp
         parser.add_argument("--attack_mode", type=str, default="multi_targeted")
         parser.add_argument("--lora_path", type=str, default=None)
         parser.add_argument("--label_to_caption_path", type=str, default="imagenet_class_index.json")
@@ -118,8 +126,6 @@ def main():
     classifier, classifier_input_size = load_single_classifier(args.model_type, device, weight_dtype)
     criterion = nn.CrossEntropyLoss()
 
-
-
     # Freeze pre-trained models
     unet.requires_grad_(False)
     unet_origin.requires_grad_(False)
@@ -157,8 +163,11 @@ def main():
     # ======================== Helper Functions ========================
     def tokenize_captions(captions):
         inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length,
-            padding="max_length", truncation=True, return_tensors="pt"
+            captions,
+            max_length=tokenizer.model_max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt"
         )
         return inputs.input_ids
 
@@ -182,37 +191,61 @@ def main():
         transforms.Normalize([0.5], [0.5]),
     ])
 
-    train_dataset = torchvision.datasets.ImageFolder(args.dataset_dir, train_transforms)
+    train_dataset = ImageFolderWithPath(args.dataset_dir, train_transforms)
 
     # Load label mapping
     with open(args.label_to_caption_path, 'r') as f:
         label_to_caption = json.load(f)
 
-    def get_label_and_caption(attack_mode):
-        if attack_mode == "multi_targeted":
-            label = int(random.choice(label_set).item())
+    wnid_to_label = {v[0]: int(k) for k, v in label_to_caption.items()}
+    label_candidates = [int(x.item()) if torch.is_tensor(x) else int(x) for x in label_set]
 
+    def get_true_label_from_path(img_path):
+        file_name = os.path.basename(img_path)
+        wnid = file_name.split("_")[0]   # n01440764_105 -> n01440764
+
+        if wnid not in wnid_to_label:
+            raise ValueError(f"图片前缀 {wnid} 不在 label_to_caption 映射表中，路径: {img_path}")
+
+        return wnid_to_label[wnid]
+
+    def get_label_and_caption(img_path, attack_mode):
+        true_label = get_true_label_from_path(img_path)
+
+        if attack_mode == "multi_targeted":
+            valid_labels = [x for x in label_candidates if x != true_label]
+            if len(valid_labels) == 0:
+                raise ValueError(f"没有可选目标标签，真实标签为 {true_label}")
+            label = random.choice(valid_labels)
         else:
             raise NotImplementedError("Attack mode not supported")
+
         caption = f"a photo of {label_to_caption[str(label)][1]}"
         return label, caption
 
     def collate_fn(examples):
         pixel_values = torch.stack([example[0] for example in examples])
         pixel_values = pixel_values.contiguous().float()
+
+        img_paths = [example[2] for example in examples]
+
         labels = []
         captions = []
-        for _ in examples:
-            label, caption = get_label_and_caption(args.attack_mode)
+        for img_path in img_paths:
+            label, caption = get_label_and_caption(img_path, args.attack_mode)
             labels.append(label)
             captions.append(caption)
+
         labels = torch.tensor(labels, dtype=torch.long)
         captions = tokenize_captions(captions)
         return {"imgs": pixel_values, "captions": captions, "labels": labels}
 
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, shuffle=True, collate_fn=collate_fn,
-        batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers,
+        train_dataset,
+        shuffle=True,
+        collate_fn=collate_fn,
+        batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
     )
     num_update_steps_per_epoch = len(train_dataloader)
     max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
@@ -227,7 +260,9 @@ def main():
     )
 
     lr_scheduler = get_scheduler(
-        "cosine", optimizer=optimizer, num_warmup_steps=0,
+        "cosine",
+        optimizer=optimizer,
+        num_warmup_steps=0,
         num_training_steps=max_train_steps,
     )
 
@@ -324,8 +359,6 @@ def main():
                 epoch_correct_sum += (pred_labels == labels).sum().item()
             epoch_total_sum += batch_size
 
-
-
             # Update progress bars
             global_step += 1
             epoch_pbar.update(1)
@@ -348,7 +381,8 @@ def main():
         epoch_asr = epoch_correct_sum / epoch_total_sum
 
         print(
-            f"Epoch {epoch} | Train ASR: {epoch_asr:.2%} | Adv Loss: {avg_epoch_adv_loss:.4f} | Wavelet Loss: {avg_epoch_wavelet_loss:.4f}")
+            f"Epoch {epoch} | Train ASR: {epoch_asr:.2%} | Adv Loss: {avg_epoch_adv_loss:.4f} | Wavelet Loss: {avg_epoch_wavelet_loss:.4f}"
+        )
 
         # TensorBoard logging
         writer.add_scalar("Train/Adv_Loss", avg_epoch_adv_loss, global_step)
@@ -372,8 +406,6 @@ def main():
 
         if global_step >= max_train_steps:
             break
-
-
 
     # Save final LoRA weights
     writer.close()
