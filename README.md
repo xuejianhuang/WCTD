@@ -147,7 +147,7 @@ python teacher_train.py
   --train_batch_size=4 \
   --num_train_epochs=10 \
   --learning_rate=1e-04 \ 
-  --seed=42 \
+  --seed=42 
 ```
 
 ### Student Training
@@ -177,7 +177,7 @@ python eval.py
   --attack_mode=multi_targeted \ 
   --test_batch_size=8 \
   --eps=16 \
-  --seed=42 \
+  --seed=42 
 ```
 ## 🛡️ Test  Models
 
@@ -197,7 +197,7 @@ python inference.py \
 ### All  Models Test
 
 ```bash
-python inference.py 
+python inference.py \
   --dataset_dir /path/to/imagenet-nips-val/images \
   --data_dir /path/to/imagenet-nips-val \
   --pretrained_model_name_or_path downloaded_pretrain_models \
