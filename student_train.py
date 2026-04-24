@@ -27,9 +27,17 @@ from utils import *
 Image.MAX_IMAGE_PIXELS = None
 
 
+class ImageFolderWithPath(torchvision.datasets.ImageFolder):
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        sample = self.loader(path)
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, target, path
+
+
 def main():
     # ======================== Configuration (TPAMI Standard) ========================
-
 
     def parse_args():
         parser = argparse.ArgumentParser()
@@ -209,29 +217,51 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize([0.5], [0.5]),
     ])
-    train_dataset = torchvision.datasets.ImageFolder(args.dataset_dir, train_transforms)
+    train_dataset = ImageFolderWithPath(args.dataset_dir, train_transforms)
 
     # Label Mapping
     with open(args.label_to_caption_path, 'r') as f:
         label_to_caption = json.load(f)
 
-    def get_label_and_caption(attack_mode):
+    wnid_to_label = {v[0]: int(k) for k, v in label_to_caption.items()}
+    label_candidates = [int(x.item()) if torch.is_tensor(x) else int(x) for x in label_set]
+
+    def get_true_label_from_path(img_path):
+        file_name = os.path.basename(img_path)
+        wnid = file_name.split("_")[0]   # n01440764_105 -> n01440764
+
+        if wnid not in wnid_to_label:
+            raise ValueError(f"图片前缀 {wnid} 不在 label_to_caption 映射表中，路径: {img_path}")
+
+        return wnid_to_label[wnid]
+
+    def get_label_and_caption(img_path, attack_mode):
+        true_label = get_true_label_from_path(img_path)
+
         if attack_mode == "multi_targeted":
-            label = int(random.choice(label_set).item())
+            valid_labels = [x for x in label_candidates if x != true_label]
+            if len(valid_labels) == 0:
+                raise ValueError(f"没有可选目标标签，真实标签为 {true_label}")
+            label = random.choice(valid_labels)
         else:
             raise NotImplementedError("Attack mode not supported")
+
         caption = f"a photo of {label_to_caption[str(label)][1]}"
         return label, caption
 
     def collate_fn(examples):
         pixel_values = torch.stack([example[0] for example in examples])
         pixel_values = pixel_values.contiguous().float()
+
+        img_paths = [example[2] for example in examples]
+
         labels = []
         captions = []
-        for _ in examples:
-            label, caption = get_label_and_caption(args.attack_mode)
+        for img_path in img_paths:
+            label, caption = get_label_and_caption(img_path, args.attack_mode)
             labels.append(label)
             captions.append(caption)
+
         labels = torch.tensor(labels, dtype=torch.long)
         captions = tokenize_captions(captions)
         return {"imgs": pixel_values, "captions": captions, "labels": labels}
