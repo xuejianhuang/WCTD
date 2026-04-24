@@ -37,7 +37,7 @@ class ImageFolderWithPath(torchvision.datasets.ImageFolder):
 
 
 def main():
-    # ======================== Configuration (TPAMI Standard) ========================
+  
 
     def parse_args():
         parser = argparse.ArgumentParser()
