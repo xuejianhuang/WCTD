@@ -139,29 +139,29 @@ We compare WCTD against state-of-the-art targeted attack methods:
 
 ```bash
 python teacher_train.py 
-  --pretrained_model_name_or_path="downloaded_pretrain_models" 
-  --dataset_dir="/path/to/imagenet/train" 
-  --output_root="/path/to/output" 
-  --model_type=res152 
-  --attack_mode=multi_targeted 
-  --train_batch_size=4 
-  --num_train_epochs=10 
-  --learning_rate=1e-04 
-  --seed=42
+  --pretrained_model_name_or_path="downloaded_pretrain_models" \ 
+  --dataset_dir="/path/to/imagenet/train" \ 
+  --output_root="/path/to/output" \ 
+  --model_type=res152 \
+  --attack_mode=multi_targeted \ 
+  --train_batch_size=4 \
+  --num_train_epochs=10 \
+  --learning_rate=1e-04 \ 
+  --seed=42 \
 ```
 
 ### Student Training
 
 ```bash
 python student_train.py 
-  --pretrained_model_name_or_path="downloaded_pretrain_models" 
-  --dataset_dir="/path/to/imagenet/train" 
-  --output_root="/path/to/output" 
-  --model_type=res152 
-  --attack_mode=multi_targeted 
-  --train_batch_size=4 
-  --num_train_epochs=10 
-  --learning_rate=1e-04 
+  --pretrained_model_name_or_path="downloaded_pretrain_models" \ 
+  --dataset_dir="/path/to/imagenet/train" \
+  --output_root="/path/to/output" \
+  --model_type=res152 \
+  --attack_mode=multi_targeted \ 
+  --train_batch_size=4 \
+  --num_train_epochs=10 \
+  --learning_rate=1e-04 \
   --seed=42
 ```
 
@@ -169,15 +169,15 @@ python student_train.py
 
 ```bash
 python eval.py 
-  --pretrained_model_name_or_path="downloaded_pretrain_models" 
-  --dataset_dir="/data/imagenet-nips-val" 
-  --student_lora_path="/output/final_model" 
-  --save_dir="/output/eval_results" 
-  --model_type=res152 
-  --attack_mode=multi_targeted 
-  --test_batch_size=8 
-  --eps=16 
-  --seed=42
+  --pretrained_model_name_or_path="downloaded_pretrain_models" \
+  --dataset_dir="/data/imagenet-nips-val" \
+  --student_lora_path="/output/final_model" \
+  --save_dir="/output/eval_results" \
+  --model_type=res152 \
+  --attack_mode=multi_targeted \ 
+  --test_batch_size=8 \
+  --eps=16 \
+  --seed=42 \
 ```
 ## 🛡️ Test  Models
 
