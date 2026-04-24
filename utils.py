@@ -269,25 +269,57 @@ def fix_labels(test_set: torch.utils.data.Dataset) -> torch.utils.data.Dataset:
 def fix_labels_nips(
     test_set: torch.utils.data.Dataset,
     data_dir: str,
+    label_flag: str = "N8",
     pytorch: bool = True,
-    target_flag: bool = False
+    target_flag: bool = False,
+    seed: int = 42
 ) -> torch.utils.data.Dataset:
-    """Fix labels for NIPS ImageNet dataset."""
-    filenames = [path.split('/')[-1] for path, _ in test_set.samples]
-    image_classes = pd.read_csv(os.path.join(data_dir, "images.csv"))
-    image_metadata = pd.DataFrame({"ImageId": [f[:-4] for f in filenames]}).merge(image_classes, on="ImageId")
+    filenames = [os.path.basename(path) for path, _ in test_set.samples]
 
-    true_labels = image_metadata["TrueLabel"].tolist()
-    target_labels = image_metadata["TargetClass"].tolist()
-    label_dict = {f: [t, tar] for f, t, tar in zip(filenames, true_labels, target_labels)}
+    image_classes = pd.read_csv(os.path.join(data_dir, "images.csv"))
+    image_metadata = pd.DataFrame(
+        {"ImageId": [os.path.splitext(f)[0] for f in filenames]}
+    ).merge(image_classes[["ImageId", "TrueLabel"]], on="ImageId", how="left")
+
+    if image_metadata["TrueLabel"].isnull().any():
+        missing_ids = image_metadata[image_metadata["TrueLabel"].isnull()]["ImageId"].tolist()
+        raise ValueError(f"Missing labels for: {missing_ids}")
+
+    true_labels_raw = image_metadata["TrueLabel"].astype(int).tolist()
+
+    base_target_set = get_classes(label_flag)
+    base_target_set = [
+        int(x.item()) if torch.is_tensor(x) else int(x)
+        for x in base_target_set
+    ]
+
+    if pytorch:
+        true_labels = [x - 1 for x in true_labels_raw]
+        target_set = base_target_set
+    else:
+        true_labels = true_labels_raw
+        target_set = [x + 1 for x in base_target_set]
+
+    rng = random.Random(seed)
+
+    label_dict = {}
+    for fname, true_label in zip(filenames, true_labels):
+        valid_targets = [x for x in target_set if x != true_label]
+        if len(valid_targets) == 0:
+            raise ValueError(f"No valid target for {fname}")
+        target_label = rng.choice(valid_targets)
+        label_dict[fname] = [true_label, target_label]
 
     new_samples = []
     for path, _ in test_set.samples:
-        fname = path.split('/')[-1]
+        fname = os.path.basename(path)
         label = label_dict[fname][1] if target_flag else label_dict[fname][0]
-        new_samples.append((path, label - 1 if pytorch else label))
+        new_samples.append((path, label))
 
     test_set.samples = new_samples
+    if hasattr(test_set, "targets"):
+        test_set.targets = [label for _, label in new_samples]
+
     return test_set
 
 def get_classes(label_flag: str) -> np.ndarray:
