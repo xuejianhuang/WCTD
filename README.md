@@ -144,8 +144,8 @@ python teacher_train.py
   --output_root="/path/to/output" \ 
   --model_type=res152 \
   --attack_mode=multi_targeted \ 
-  --train_batch_size=4 \
-  --num_train_epochs=10 \
+  --train_batch_size=16 \
+  --num_train_epochs=100 \
   --learning_rate=1e-04 \ 
   --seed=42 
 ```
@@ -159,8 +159,8 @@ python student_train.py
   --output_root="/path/to/output" \
   --model_type=res152 \
   --attack_mode=multi_targeted \ 
-  --train_batch_size=4 \
-  --num_train_epochs=10 \
+  --train_batch_size=16 \
+  --num_train_epochs=100 \
   --learning_rate=1e-04 \
   --seed=42
 ```
