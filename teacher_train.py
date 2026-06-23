@@ -205,7 +205,7 @@ def main():
         wnid = file_name.split("_")[0]   # n01440764_105 -> n01440764
 
         if wnid not in wnid_to_label:
-            raise ValueError(f"图片前缀 {wnid} 不在 label_to_caption 映射表中，路径: {img_path}")
+           raise ValueError(f"Image prefix {wnid} not found in label_to_caption mapping, file path: {img_path}")
 
         return wnid_to_label[wnid]
 
@@ -215,7 +215,7 @@ def main():
         if attack_mode == "multi_targeted":
             valid_labels = [x for x in label_candidates if x != true_label]
             if len(valid_labels) == 0:
-                raise ValueError(f"没有可选目标标签，真实标签为 {true_label}")
+                raise ValueError(f"No valid target labels available, true label is: {true_label}")
             label = random.choice(valid_labels)
         else:
             raise NotImplementedError("Attack mode not supported")
