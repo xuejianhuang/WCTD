@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import random
 
@@ -67,8 +68,14 @@ def main():
         parser.add_argument("--s_for", type=int, default=6)
         parser.add_argument("--s_gen", type=int, default=6)
         parser.add_argument("--num_timesteps", type=int, default=20)
+        parser.add_argument("--val_split_ratio", type=float, default=0.1)
+        parser.add_argument("--early_stopping_patience", type=int, default=3)
 
         args = parser.parse_args()
+        if not 0.0 < args.val_split_ratio < 1.0:
+            parser.error("--val_split_ratio must be between 0 and 1")
+        if args.early_stopping_patience < 1:
+            parser.error("--early_stopping_patience must be at least 1")
 
         args.log_dir = os.path.join(args.output_root, "logs")
 
@@ -193,6 +200,16 @@ def main():
 
     train_dataset = ImageFolderWithPath(args.dataset_dir, train_transforms)
 
+    # Reproducible train/validation split.
+    total_size = len(train_dataset)
+    val_size = int(total_size * args.val_split_ratio)
+    train_size = total_size - val_size
+    if val_size == 0 or train_size == 0:
+        raise ValueError("The dataset and --val_split_ratio must produce non-empty train and validation sets")
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        train_dataset, [train_size, val_size], generator=torch.Generator().manual_seed(args.seed)
+    )
+
     # Load label mapping
     with open(args.label_to_caption_path, 'r') as f:
         label_to_caption = json.load(f)
@@ -247,6 +264,11 @@ def main():
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset, shuffle=False, collate_fn=collate_fn,
+        batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers,
+    )
+    print(f"[INFO] Dataset split: {train_size} training images, {val_size} validation images")
     num_update_steps_per_epoch = len(train_dataloader)
     max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
 
@@ -266,10 +288,89 @@ def main():
         num_training_steps=max_train_steps,
     )
 
+    @torch.no_grad()
+    def validate():
+        # Keep validation labels and VAE samples repeatable without changing training RNGs.
+        python_rng_state = random.getstate()
+        was_training = unet.training
+        unet.eval()
+        adv_loss_sum = 0.0
+        wavelet_loss_sum = 0.0
+        total_loss_sum = 0.0
+        correct_sum = 0
+        sample_count = 0
+        cuda_devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+        try:
+            with torch.random.fork_rng(devices=cuda_devices):
+                random.seed(args.seed)
+                torch.manual_seed(args.seed)
+                for batch in tqdm(val_dataloader, desc="Validation", leave=False):
+                    imgs = batch["imgs"].to(device=device, dtype=weight_dtype)
+                    captions = batch["captions"].to(device)
+                    labels = batch["labels"].to(device=device, dtype=torch.long)
+                    clean_imgs = unnormalize_ddpm(imgs)
+
+                    latents = vae.encode(unet_in_transform(imgs)).latent_dist.sample()
+                    latents = latents * vae.config.scaling_factor
+                    encoder_hidden_states = text_encoder(captions, return_dict=False)[0]
+                    empty_captions = tokenize_captions([""] * imgs.size(0)).to(device)
+                    encoder_hidden_states_empty = text_encoder(empty_captions, return_dict=False)[0]
+                    for t in timesteps_inverse:
+                        model_pred = unet_origin(latents, t, encoder_hidden_states_empty, return_dict=False)[0]
+                        latents = ddim_inv_scheduler.step(model_pred, t, latents, return_dict=False)[0]
+
+                    avg_adv_loss = 0.0
+                    avg_wavelet_loss = 0.0
+                    avg_total_loss = 0.0
+                    last_adv_out = None
+                    for t in timesteps:
+                        model_pred = unet(latents, t, encoder_hidden_states, return_dict=False)[0]
+                        latents, pred_original_sample = ddim_scheduler.step(
+                            model_pred, t, latents, return_dict=False
+                        )
+                        adv_imgs = vae.decode(
+                            pred_original_sample / vae.config.scaling_factor, return_dict=False
+                        )[0]
+                        adv_imgs = unet_out_transform(unnormalize_ddpm(adv_imgs))
+                        LL_clean, HF_clean = dwt(clean_imgs)
+                        LL_adv, HF_adv = dwt(adv_imgs)
+                        wavelet_loss = F.mse_loss(HF_adv[0], HF_clean[0])
+                        adv_imgs = budget(adv_imgs, clean_imgs, eps, args.attack_mode)
+                        if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
+                            adv_out = classifier(normalize(adv_imgs)).logits
+                        else:
+                            adv_out = classifier(normalize(adv_imgs))
+                        adv_loss = criterion(adv_out, labels)
+                        total_loss = lamda_adv * adv_loss + lamda_wavelet * wavelet_loss
+                        avg_adv_loss += adv_loss.item() / len(timesteps)
+                        avg_wavelet_loss += wavelet_loss.item() / len(timesteps)
+                        avg_total_loss += total_loss.item() / len(timesteps)
+                        last_adv_out = adv_out
+
+                    batch_size = imgs.size(0)
+                    adv_loss_sum += avg_adv_loss * batch_size
+                    wavelet_loss_sum += avg_wavelet_loss * batch_size
+                    total_loss_sum += avg_total_loss * batch_size
+                    correct_sum += (last_adv_out.argmax(1) == labels).sum().item()
+                    sample_count += batch_size
+        finally:
+            random.setstate(python_rng_state)
+            unet.train(was_training)
+        return {
+            "adv_loss": adv_loss_sum / sample_count,
+            "wavelet_loss": wavelet_loss_sum / sample_count,
+            "total_loss": total_loss_sum / sample_count,
+            "asr": correct_sum / sample_count,
+        }
+
     # ======================== Training Loop ========================
     global_step = 0
     lamda_adv = 1.0
     lamda_wavelet = 10.0
+    best_loss = float('inf')
+    best_epoch = -1
+    best_lora_state = None
+    epochs_without_improvement = 0
 
     for epoch in range(args.num_train_epochs):
         unet.train()
@@ -391,23 +492,53 @@ def main():
         writer.add_scalar("Train/Epoch_loss", avg_epoch_total_loss, global_step)
         writer.flush()
 
-        # ======================== Save LoRA Checkpoint Every Epoch ========================
-        epoch_save_path = os.path.join(args.output_root, f"epoch_{epoch}")
-        unet_lora_state_dict_epoch = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(unet)
+        # Validate and select the checkpoint with the lowest validation total loss.
+        val_metrics = validate()
+        val_loss = val_metrics["total_loss"]
+        if not math.isfinite(val_loss):
+            raise RuntimeError(f"Non-finite validation loss at epoch {epoch}: {val_loss}")
+        print(
+            f"Epoch {epoch} | Val Loss: {val_loss:.4f} | Val ASR: {val_metrics['asr']:.2%} | "
+            f"Adv Loss: {val_metrics['adv_loss']:.4f} | Wavelet Loss: {val_metrics['wavelet_loss']:.4f}"
         )
-        StableDiffusionPipeline.save_lora_weights(
-            save_directory=epoch_save_path,
-            unet_lora_layers=unet_lora_state_dict_epoch,
-            text_encoder_lora_layers=None,
-            safe_serialization=True,
-        )
-        print(f" Saved Epoch {epoch} LoRA model to: {epoch_save_path}")
+        writer.add_scalar("Val/Total_Loss", val_loss, global_step)
+        writer.add_scalar("Val/Adv_Loss", val_metrics["adv_loss"], global_step)
+        writer.add_scalar("Val/Wavelet_Loss", val_metrics["wavelet_loss"], global_step)
+        writer.add_scalar("Val/Attack_Success_Rate", val_metrics["asr"], global_step)
+        writer.flush()
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_epoch = epoch
+            epochs_without_improvement = 0
+            best_lora_state = {
+                name: tensor.detach().cpu().clone()
+                for name, tensor in get_peft_model_state_dict(unet).items()
+            }
+            best_save_path = os.path.join(args.output_root, "best_model")
+            StableDiffusionPipeline.save_lora_weights(
+                save_directory=best_save_path,
+                unet_lora_layers=convert_state_dict_to_diffusers(best_lora_state),
+                text_encoder_lora_layers=None,
+                safe_serialization=True,
+            )
+            print(f"[INFO] Saved best teacher checkpoint: epoch {best_epoch}, val_loss={best_loss:.6f}")
+        else:
+            epochs_without_improvement += 1
+            print(f"[INFO] Validation loss did not improve: {epochs_without_improvement}/{args.early_stopping_patience}")
+
+        if epochs_without_improvement >= args.early_stopping_patience:
+            print(f"[INFO] Early stopping at epoch {epoch}; best epoch {best_epoch}, val_loss={best_loss:.6f}")
+            break
 
         if global_step >= max_train_steps:
             break
 
     # Save final LoRA weights
+    # Preserve the original output path, exporting the best validation checkpoint.
+    if best_lora_state is None:
+        raise RuntimeError("No validation checkpoint was produced")
+    set_peft_model_state_dict(unet, best_lora_state)
     writer.close()
     unet_lora_state_dict = convert_state_dict_to_diffusers(
         get_peft_model_state_dict(unet)
