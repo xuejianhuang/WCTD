@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import random
 
@@ -80,8 +81,14 @@ def main():
         parser.add_argument("--w_distill", type=float, default=1.0)
         parser.add_argument("--lambda_img", type=float, default=1.0)
         parser.add_argument("--w_adv", type=float, default=1.0)
+        parser.add_argument("--val_split_ratio", type=float, default=0.1)
+        parser.add_argument("--early_stopping_patience", type=int, default=3)
 
         args = parser.parse_args()
+        if not 0.0 < args.val_split_ratio < 1.0:
+            parser.error("--val_split_ratio must be between 0 and 1")
+        if args.early_stopping_patience < 1:
+            parser.error("--early_stopping_patience must be at least 1")
 
         args.log_dir = os.path.join(args.output_root, "logs")
 
@@ -219,6 +226,16 @@ def main():
     ])
     train_dataset = ImageFolderWithPath(args.dataset_dir, train_transforms)
 
+    # Reproducible train/validation split.
+    total_size = len(train_dataset)
+    val_size = int(total_size * args.val_split_ratio)
+    train_size = total_size - val_size
+    if val_size == 0 or train_size == 0:
+        raise ValueError("The dataset and --val_split_ratio must produce non-empty train and validation sets")
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        train_dataset, [train_size, val_size], generator=torch.Generator().manual_seed(args.seed)
+    )
+
     # Label Mapping
     with open(args.label_to_caption_path, 'r') as f:
         label_to_caption = json.load(f)
@@ -270,6 +287,11 @@ def main():
         train_dataset, shuffle=True, collate_fn=collate_fn,
         batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers,
     )
+    val_dataloader = torch.utils.data.DataLoader(
+        val_dataset, shuffle=False, collate_fn=collate_fn,
+        batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers,
+    )
+    print(f"[INFO] Dataset split: {train_size} training images, {val_size} validation images")
     num_update_steps_per_epoch = len(train_dataloader)
     max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
 
@@ -286,9 +308,113 @@ def main():
         num_training_steps=max_train_steps,
     )
 
+    @torch.no_grad()
+    def validate():
+        # Repeat validation randomness and restore training RNGs after evaluation.
+        python_rng_state = random.getstate()
+        was_training = student_unet.training
+        student_unet.eval()
+        distill_loss_sum = 0.0
+        adv_loss_sum = 0.0
+        total_loss_sum = 0.0
+        correct_sum = 0
+        sample_count = 0
+        cuda_devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+        try:
+            with torch.random.fork_rng(devices=cuda_devices):
+                random.seed(args.seed)
+                torch.manual_seed(args.seed)
+                for batch in tqdm(val_dataloader, desc="Validation", leave=False):
+                    imgs = batch["imgs"].to(device=device, dtype=weight_dtype)
+                    captions = batch["captions"].to(device)
+                    labels = batch["labels"].to(device=device, dtype=torch.long)
+                    clean_imgs = unnormalize_ddpm(imgs)
+
+                    latents = vae.encode(unet_in_transform(imgs)).latent_dist.sample() * scaling_factor
+                    encoder_hidden_states = text_encoder(captions, return_dict=False)[0]
+                    empty_captions = tokenize_captions([""] * imgs.size(0)).to(device)
+                    encoder_hidden_states_empty = text_encoder(empty_captions, return_dict=False)[0]
+                    for t in timesteps_inverse:
+                        model_pred = unet_origin(latents, t, encoder_hidden_states_empty, return_dict=False)[0]
+                        latents = ddim_inv_scheduler.step(model_pred, t, latents, return_dict=False)[0]
+
+                    teacher_latents = latents.clone()
+                    trajectory = [teacher_latents.clone()]
+                    for t in timesteps:
+                        model_pred = teacher_unet(teacher_latents, t, encoder_hidden_states, return_dict=False)[0]
+                        teacher_latents, _ = ddim_scheduler.step(
+                            model_pred, t, teacher_latents, return_dict=False
+                        )
+                        trajectory.append(teacher_latents.clone())
+                    teacher_final_latent = trajectory[-1].clone()
+                    teacher_adv_raw = vae.decode(teacher_final_latent / scaling_factor, return_dict=False)[0]
+                    teacher_adv_raw = unet_out_transform(unnormalize_ddpm(teacher_adv_raw))
+                    teacher_adv_budget = budget(teacher_adv_raw, clean_imgs, eps, args.attack_mode)
+                    if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
+                        teacher_logits = classifier(normalize(teacher_adv_budget)).logits
+                    else:
+                        teacher_logits = classifier(normalize(teacher_adv_budget))
+
+                    k = random.randint(0, len(timesteps) - 2)
+                    t_k = timesteps[k]
+                    z_k = trajectory[k].clone()
+                    model_pred_student = student_unet(z_k, t_k, encoder_hidden_states, return_dict=False)[0]
+                    _, pred_student_final = ddim_scheduler.step(
+                        model_pred_student, t_k, z_k, return_dict=False
+                    )
+                    adv_imgs_raw = vae.decode(pred_student_final / scaling_factor, return_dict=False)[0]
+                    adv_imgs_raw = unet_out_transform(unnormalize_ddpm(adv_imgs_raw))
+                    adv_imgs_adv_loss = budget(adv_imgs_raw, clean_imgs, eps, args.attack_mode)
+                    loss_mse = F.mse_loss(pred_student_final, teacher_final_latent)
+
+                    loss_kl = torch.tensor(0.0, device=device, dtype=weight_dtype)
+                    if args.lambda_log > 0:
+                        if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
+                            student_logits = classifier(normalize(adv_imgs_adv_loss)).logits
+                        else:
+                            student_logits = classifier(normalize(adv_imgs_adv_loss))
+                        T = args.distill_temperature
+                        teacher_logits_T = teacher_logits / T
+                        student_logits_T = student_logits / T
+                        teacher_logits_T_stable = teacher_logits_T - teacher_logits_T.max(dim=-1, keepdim=True)[0]
+                        student_logits_T_stable = student_logits_T - student_logits_T.max(dim=-1, keepdim=True)[0]
+                        teacher_probs = F.softmax(teacher_logits_T_stable, dim=-1)
+                        student_log_probs = F.log_softmax(student_logits_T_stable, dim=-1)
+                        teacher_probs_safe = teacher_probs + 1e-10
+                        teacher_probs_safe = teacher_probs_safe / teacher_probs_safe.sum(dim=-1, keepdim=True)
+                        loss_kl = F.kl_div(
+                            student_log_probs.double(), teacher_probs_safe.double(), reduction='batchmean'
+                        ).float() * (T ** 2)
+
+                    loss_distill = args.lambda_img * loss_mse + args.lambda_log * loss_kl
+                    if args.model_type in ['swin_tiny', 'mixer_b16', 'deit_b', 'cycle_mlp']:
+                        adv_out = classifier(normalize(adv_imgs_adv_loss)).logits
+                    else:
+                        adv_out = classifier(normalize(adv_imgs_adv_loss))
+                    loss_adv = criterion(adv_out, labels)
+                    total_loss = args.w_distill * loss_distill + args.w_adv * loss_adv
+                    batch_size = imgs.size(0)
+                    distill_loss_sum += loss_distill.item() * batch_size
+                    adv_loss_sum += loss_adv.item() * batch_size
+                    total_loss_sum += total_loss.item() * batch_size
+                    correct_sum += (adv_out.argmax(1) == labels).sum().item()
+                    sample_count += batch_size
+        finally:
+            random.setstate(python_rng_state)
+            student_unet.train(was_training)
+        return {
+            "distill_loss": distill_loss_sum / sample_count,
+            "adv_loss": adv_loss_sum / sample_count,
+            "total_loss": total_loss_sum / sample_count,
+            "asr": correct_sum / sample_count,
+        }
+
     # ======================== Training Loop (TPAMI Standard) ========================
     global_step = 0
     best_loss = float('inf')
+    best_epoch = -1
+    best_lora_state = None
+    epochs_without_improvement = 0
 
     for epoch in range(args.num_train_epochs):
         student_unet.train()
@@ -426,24 +552,54 @@ def main():
         writer.add_scalar("Train/Attack_Success_Rate", epoch_asr, global_step)
         writer.flush()
 
-        # ======================== Save LoRA Checkpoint Every Epoch ========================
-        epoch_save_path = os.path.join(args.output_root, f"epoch_{epoch}")
-        unet_lora_state_dict_epoch = convert_state_dict_to_diffusers(
-            get_peft_model_state_dict(student_unet)
+        # Validate and select the checkpoint with the lowest validation total loss.
+        val_metrics = validate()
+        val_loss = val_metrics["total_loss"]
+        if not math.isfinite(val_loss):
+            raise RuntimeError(f"Non-finite validation loss at epoch {epoch}: {val_loss}")
+        print(
+            f"Epoch {epoch} | Val Loss: {val_loss:.4f} | Val ASR: {val_metrics['asr']:.2%} | "
+            f"Distill Loss: {val_metrics['distill_loss']:.4f} | Adv Loss: {val_metrics['adv_loss']:.4f}"
         )
-        StableDiffusionPipeline.save_lora_weights(
-            save_directory=epoch_save_path,
-            unet_lora_layers=unet_lora_state_dict_epoch,
-            text_encoder_lora_layers=None,
-            safe_serialization=True,
-        )
-        print(f"[INFO] Saved Epoch {epoch} LoRA model to: {epoch_save_path}")
+        writer.add_scalar("Val/Total_Loss", val_loss, global_step)
+        writer.add_scalar("Val/Distill_Loss", val_metrics["distill_loss"], global_step)
+        writer.add_scalar("Val/Adv_Loss", val_metrics["adv_loss"], global_step)
+        writer.add_scalar("Val/Attack_Success_Rate", val_metrics["asr"], global_step)
+        writer.flush()
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_epoch = epoch
+            epochs_without_improvement = 0
+            best_lora_state = {
+                name: tensor.detach().cpu().clone()
+                for name, tensor in get_peft_model_state_dict(student_unet).items()
+            }
+            best_save_path = os.path.join(args.output_root, "best_model")
+            StableDiffusionPipeline.save_lora_weights(
+                save_directory=best_save_path,
+                unet_lora_layers=convert_state_dict_to_diffusers(best_lora_state),
+                text_encoder_lora_layers=None,
+                safe_serialization=True,
+            )
+            print(f"[INFO] Saved best student checkpoint: epoch {best_epoch}, val_loss={best_loss:.6f}")
+        else:
+            epochs_without_improvement += 1
+            print(f"[INFO] Validation loss did not improve: {epochs_without_improvement}/{args.early_stopping_patience}")
+
+        if epochs_without_improvement >= args.early_stopping_patience:
+            print(f"[INFO] Early stopping at epoch {epoch}; best epoch {best_epoch}, val_loss={best_loss:.6f}")
+            break
 
         if global_step >= max_train_steps:
             break
 
     # -------------------------- Final Save --------------------------
 
+    # Keep final_model compatible with existing commands, exporting the best checkpoint.
+    if best_lora_state is None:
+        raise RuntimeError("No validation checkpoint was produced")
+    set_peft_model_state_dict(student_unet, best_lora_state)
     writer.close()
     final_save_path = os.path.join(args.output_root, "final_model")
     final_lora_state = convert_state_dict_to_diffusers(get_peft_model_state_dict(student_unet))
