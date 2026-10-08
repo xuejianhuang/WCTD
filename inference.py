@@ -51,8 +51,15 @@ def parse_args():
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--eps", type=int, default=16)
     parser.add_argument("--attack_mode", type=str, default="multi_targeted")
-    parser.add_argument("--s_for", type=int, default=6)
-    parser.add_argument("--s_gen", type=int, default=6)
+    parser.add_argument("--s_for", type=int, default=6, help="Number of DDIM inversion steps.")
+    parser.add_argument(
+        "--s_gen", type=int, default=1, choices=[1],
+        help="Number of student predictions; this distilled student uses single-step prediction."
+    )
+    parser.add_argument(
+        "--teacher_s_gen", type=int, default=6,
+        help="Teacher training generation schedule length used to select the student's starting timestep."
+    )
     parser.add_argument("--num_timesteps", type=int, default=20)
     parser.add_argument("--label_flag", type=str, default="N8")
     parser.add_argument("--base_size", type=int, default=224)
@@ -276,7 +283,15 @@ def main():
     timesteps_inverse = ddim_inv_scheduler.timesteps[:args.s_for]
 
     ddim_scheduler.set_timesteps(args.num_timesteps, device=device)
-    timesteps = ddim_scheduler.timesteps[-args.s_gen:]
+    teacher_timesteps = ddim_scheduler.timesteps[-args.teacher_s_gen:]
+    # Match eval.py: predict the final latent from the start of the teacher schedule.
+    student_timestep = teacher_timesteps[0]
+
+    log(
+        f"[INFO] Sampling: {len(timesteps_inverse)} DDIM inversion steps + "
+        f"{args.s_gen} student prediction (t={int(student_timestep)}, "
+        f"teacher_s_gen={args.teacher_s_gen})"
+    )
 
     scaling_factor = vae.config.scaling_factor
 
@@ -379,16 +394,17 @@ def main():
                 model_pred = unet_origin(latents, t, encoder_hidden_states_empty, return_dict=False)[0]
                 latents = ddim_inv_scheduler.step(model_pred, t, latents, return_dict=False)[0]
 
-            pred_original_sample = None
-            for t in timesteps:
-                model_pred = unet(latents, t, encoder_hidden_states, return_dict=False)[0]
-                latents, pred_original_sample = ddim_scheduler.step(
-                    model_pred, t, latents, return_dict=False
-                )
+            model_pred_student = unet(
+                latents, student_timestep, encoder_hidden_states, return_dict=False
+            )[0]
+            # The second return value is the predicted final denoised latent.
+            _, pred_original_sample = ddim_scheduler.step(
+                model_pred_student, student_timestep, latents, return_dict=False
+            )
 
             adv_imgs = vae.decode(pred_original_sample / scaling_factor, return_dict=False)[0]
             adv_imgs = resize_batch(unnormalize_ddpm(adv_imgs), args.base_size)
-            adv_imgs = budget(adv_imgs, clean_imgs, eps,args.attack_mode)
+            adv_imgs = budget(adv_imgs, clean_imgs, eps, args.attack_mode)
 
             for item in eval_model_list:
                 name = item["name"]
